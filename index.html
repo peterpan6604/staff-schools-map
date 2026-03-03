@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Staff & Schools Map</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root{--bg-primary:#0f1419;--bg-secondary:#1a1f2e;--bg-card:#1e2538;--bg-hover:#252d42;--text-primary:#e8edf5;--text-secondary:#8b95a8;--text-muted:#5a6478;--accent:#4f8cff;--accent-glow:rgba(79,140,255,0.15);--emp-primary:#f59e0b;--emp-secondary:#8b5cf6;--sch-primary:#10b981;--sch-secondary:#ec4899;--border:rgba(255,255,255,0.06);--radius:12px}
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'DM Sans',sans-serif;background:var(--bg-primary);color:var(--text-primary);height:100vh;overflow:hidden;display:flex;flex-direction:column}
+        header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:var(--bg-secondary);border-bottom:1px solid var(--border);flex-shrink:0;z-index:1000}
+        .logo{display:flex;align-items:center;gap:12px}
+        .logo-icon{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#4f8cff,#7c3aed);display:flex;align-items:center;justify-content:center;font-size:16px}
+        .logo-text{font-size:19px;font-weight:700;letter-spacing:-0.5px}
+        .logo-text em{color:var(--accent);font-style:normal}
+        .header-btns{display:flex;gap:8px;align-items:center}
+        .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;font-family:inherit;font-size:12.5px;font-weight:600;border:none;cursor:pointer;transition:all 0.2s;white-space:nowrap}
+        .btn-ghost{background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border)}
+        .btn-ghost:hover{background:var(--bg-hover)}
+        .btn-danger{background:rgba(239,68,68,0.12);color:#ef4444;border:1px solid rgba(239,68,68,0.2)}
+        .btn-privacy{background:rgba(16,185,129,0.1);color:#10b981;border:1px solid rgba(16,185,129,0.2);font-size:11.5px;padding:6px 12px}
+        .layout{display:flex;flex:1;overflow:hidden}
+        .sidebar{width:330px;background:var(--bg-secondary);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0}
+        .sidebar::-webkit-scrollbar{width:5px}
+        .sidebar::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:3px}
+        .section{padding:18px;border-bottom:1px solid var(--border)}
+        .section-title{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-muted);margin-bottom:12px}
+        .upload{border:2px dashed rgba(255,255,255,0.1);border-radius:var(--radius);padding:16px;text-align:center;cursor:pointer;position:relative;transition:all 0.25s;margin-bottom:10px}
+        .upload:hover{border-color:var(--accent);background:var(--accent-glow)}
+        .upload.loaded{border-color:#10b981;border-style:solid;background:rgba(16,185,129,0.08)}
+        .upload input{position:absolute;inset:0;opacity:0;cursor:pointer}
+        .upload-icon{font-size:24px;margin-bottom:4px}
+        .upload-label{font-size:13.5px;font-weight:600}
+        .upload-hint{font-size:11px;color:var(--text-muted);margin-top:2px;line-height:1.4}
+        .upload-status{font-size:12px;color:#10b981;font-weight:600;margin-top:6px;display:none}
+        .upload.loaded .upload-status{display:block}
+        .legend-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+        .legend-item{display:flex;align-items:center;gap:7px;padding:7px 9px;background:var(--bg-card);border-radius:7px;font-size:11px;font-weight:500}
+        .legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+        .legend-sq{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+        .stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+        .stat{background:var(--bg-card);border-radius:var(--radius);padding:12px;text-align:center}
+        .stat-num{font-size:24px;font-weight:700;color:var(--accent)}
+        .stat-label{font-size:10.5px;color:var(--text-muted);font-weight:500;margin-top:1px}
+        .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:6px 0}
+        .toggle-label{font-size:13px;font-weight:500}
+        .toggle{width:44px;height:24px;background:var(--bg-card);border-radius:12px;position:relative;cursor:pointer;transition:background 0.2s;border:1px solid var(--border);flex-shrink:0}
+        .toggle.on{background:var(--accent);border-color:var(--accent)}
+        .toggle::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:transform 0.2s}
+        .toggle.on::after{transform:translateX(20px)}
+        .chips{display:flex;flex-wrap:wrap;gap:6px}
+        .chip{padding:5px 12px;border-radius:16px;font-size:11.5px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);transition:all 0.2s;font-family:inherit}
+        .chip.on{border-color:var(--accent);background:var(--accent-glow);color:var(--accent)}
+        .dist-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+        .dist-val{font-size:20px;font-weight:700;color:var(--accent)}
+        .dist-unit{font-size:11px;color:var(--text-muted);margin-left:4px}
+        input[type="range"]{-webkit-appearance:none;width:100%;height:6px;border-radius:3px;background:var(--bg-card);outline:none}
+        input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);cursor:pointer;box-shadow:0 2px 8px rgba(79,140,255,0.4)}
+        .map-wrap{flex:1;position:relative}
+        #map{height:100%;width:100%}
+        .leaflet-popup-content-wrapper{background:var(--bg-card)!important;color:var(--text-primary)!important;border-radius:10px!important;box-shadow:0 4px 24px rgba(0,0,0,0.3)!important;border:1px solid var(--border)!important}
+        .leaflet-popup-tip{background:var(--bg-card)!important}
+        .leaflet-popup-content{margin:14px 18px!important;font-family:'DM Sans',sans-serif!important;font-size:13px!important;line-height:1.5!important}
+        .popup-name{font-weight:700;font-size:14px;margin-bottom:6px}
+        .popup-row{color:var(--text-secondary);font-size:12px;padding:2px 0}
+        .popup-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;margin-top:6px}
+        .popup-divider{border:none;border-top:1px solid var(--border);margin:8px 0}
+        .overlay{position:fixed;inset:0;background:rgba(15,20,25,0.85);display:none;flex-direction:column;align-items:center;justify-content:center;z-index:9999}
+        .overlay.show{display:flex}
+        .spinner{width:48px;height:48px;border:4px solid var(--bg-card);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .overlay-text{margin-top:16px;font-size:14px;color:var(--text-secondary)}
+        .toast{position:fixed;bottom:24px;right:24px;padding:14px 20px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-weight:500;z-index:10000;max-width:360px;transform:translateY(80px);opacity:0;transition:all 0.35s;box-shadow:0 4px 24px rgba(0,0,0,0.3)}
+        .toast.show{transform:translateY(0);opacity:1}
+        .toast.success{border-left:4px solid #10b981}.toast.error{border-left:4px solid #ef4444}.toast.info{border-left:4px solid var(--accent)}
+        .modal-bg{position:fixed;inset:0;background:rgba(15,20,25,0.8);z-index:10001;display:none;align-items:center;justify-content:center}
+        .modal-bg.show{display:flex}
+        .modal{background:var(--bg-secondary);border:1px solid var(--border);border-radius:16px;padding:32px;max-width:520px;width:90%;box-shadow:0 8px 40px rgba(0,0,0,0.5)}
+        .modal h2{font-size:18px;font-weight:700;margin-bottom:16px}
+        .modal p{font-size:13.5px;color:var(--text-secondary);line-height:1.7;margin-bottom:12px}
+        .modal ul{list-style:none;margin:0 0 16px 0;padding:0}
+        .modal ul li{font-size:13px;color:var(--text-secondary);padding:6px 0 6px 24px;position:relative;line-height:1.5}
+        .modal ul li::before{content:'\2713';position:absolute;left:0;color:#10b981;font-weight:700}
+        @media(max-width:700px){.layout{flex-direction:column}.sidebar{width:100%;max-height:40vh;border-right:none;border-bottom:1px solid var(--border)}.header-btns .btn-ghost{display:none}}
+    </style>
+</head>
+<body>
+<header>
+    <div class="logo"><div class="logo-icon">&#x1F4CD;</div><div class="logo-text">Staff <em>&amp;</em> Schools</div></div>
+    <div class="header-btns">
+        <button class="btn btn-privacy" onclick="showPrivacy()">&#x1F512; Privacy Info</button>
+        <button class="btn btn-ghost" onclick="downloadTemplate('employees')">&#x1F465; Employee Template</button>
+        <button class="btn btn-ghost" onclick="downloadTemplate('schools')">&#x1F3EB; School Template</button>
+        <button class="btn btn-danger" onclick="clearAll()">&#x1F5D1; Clear All</button>
+    </div>
+</header>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="section">
+            <div class="section-title">Data Upload</div>
+            <div class="upload" id="empUpload"><input type="file" accept=".csv,.xlsx,.xls" onchange="handleUpload(event,'employees')"><div class="upload-icon">&#x1F465;</div><div class="upload-label">Employees</div><div class="upload-hint">Name, Role, Location</div><div class="upload-status" id="empStatus"></div></div>
+            <div class="upload" id="schUpload"><input type="file" accept=".csv,.xlsx,.xls" onchange="handleUpload(event,'schools')"><div class="upload-icon">&#x1F3EB;</div><div class="upload-label">Schools</div><div class="upload-hint">Account Name, Region, Programme, AP, Address, Phase</div><div class="upload-status" id="schStatus"></div></div>
+        </div>
+        <div class="section">
+            <div class="section-title">Legend</div>
+            <div class="legend-grid">
+                <div class="legend-item"><div class="legend-dot" style="background:var(--emp-primary)"></div>Employee &#8212; Primary</div>
+                <div class="legend-item"><div class="legend-dot" style="background:var(--emp-secondary)"></div>Employee &#8212; Secondary</div>
+                <div class="legend-item"><div class="legend-sq" style="background:var(--sch-primary)"></div>School &#8212; Primary</div>
+                <div class="legend-item"><div class="legend-sq" style="background:var(--sch-secondary)"></div>School &#8212; Secondary</div>
+            </div>
+        </div>
+        <div class="section">
+            <div class="section-title">Summary</div>
+            <div class="stats-grid">
+                <div class="stat"><div class="stat-num" id="nEmp">0</div><div class="stat-label">Employees</div></div>
+                <div class="stat"><div class="stat-num" id="nSch">0</div><div class="stat-label">Schools</div></div>
+                <div class="stat"><div class="stat-num" id="nPri">0</div><div class="stat-label">Primary</div></div>
+                <div class="stat"><div class="stat-num" id="nSec">0</div><div class="stat-label">Secondary</div></div>
+            </div>
+        </div>
+        <div class="section">
+            <div class="section-title">Distance Circles</div>
+            <div class="toggle-row"><span class="toggle-label">Show distance circles</span><div class="toggle on" id="togCircles" onclick="toggleCircles()"></div></div>
+            <div class="dist-row"><span class="toggle-label">Radius</span><div><span class="dist-val" id="distVal">30</span><span class="dist-unit">miles</span></div></div>
+            <input type="range" min="5" max="100" value="30" step="5" oninput="updateDist(this.value)">
+        </div>
+        <div class="section">
+            <div class="section-title">Filters</div>
+            <div class="toggle-row"><span class="toggle-label">Show Employees</span><div class="toggle on" id="togEmp" onclick="toggleLayer('employees')"></div></div>
+            <div class="toggle-row" style="margin-bottom:12px"><span class="toggle-label">Show Schools</span><div class="toggle on" id="togSch" onclick="toggleLayer('schools')"></div></div>
+            <div class="section-title" style="margin-bottom:8px">Phase</div>
+            <div class="chips" id="specChips"><button class="chip on" onclick="setSpec('all')">All</button><button class="chip" onclick="setSpec('primary')">Primary</button><button class="chip" onclick="setSpec('secondary')">Secondary</button></div>
+            <div id="regionSection" style="display:none;margin-top:14px"><div class="section-title" style="margin-bottom:8px">Region</div><div class="chips" id="regionChips"></div></div>
+            <div id="progSection" style="display:none;margin-top:14px"><div class="section-title" style="margin-bottom:8px">Programme</div><div class="chips" id="progChips"></div></div>
+        </div>
+    </aside>
+    <div class="map-wrap"><div id="map"></div></div>
+</div>
+<div class="overlay" id="overlay"><div class="spinner"></div><div class="overlay-text" id="overlayText">Processing...</div></div>
+<div class="toast" id="toast"></div>
+<div class="modal-bg" id="privacyModal">
+    <div class="modal">
+        <h2>&#x1F512; Privacy &amp; Data Notice</h2>
+        <p>This tool is designed with data privacy as a core principle:</p>
+        <ul>
+            <li><strong>All data stays in your browser.</strong> No CSV data is uploaded to any server, database, or cloud storage.</li>
+            <li><strong>Nothing is stored.</strong> When you close this tab, all uploaded data is permanently gone. No cookies, no local storage, no saved files.</li>
+            <li><strong>Postcode lookups are anonymous.</strong> Only postcodes are sent to Postcodes.io (a free UK government-backed service) to get coordinates. No names, roles, or personal data is transmitted.</li>
+            <li><strong>Place name lookups are anonymous.</strong> Only town/city names are sent to get approximate coordinates. No personal details included.</li>
+            <li><strong>The host (GitHub Pages) never sees your data.</strong> It only serves the code file.</li>
+            <li><strong>No analytics or tracking.</strong> No Google Analytics, no cookies, no tracking scripts of any kind.</li>
+        </ul>
+        <p style="font-size:12px;color:var(--text-muted)">For questions about data handling, contact your programme manager.</p>
+        <button class="btn btn-ghost" onclick="hidePrivacy()" style="width:100%;justify-content:center">Got it &#8212; close</button>
+    </div>
+</div>
+<script>
+var map,empLayer=L.layerGroup(),schLayer=L.layerGroup(),circLayer=L.layerGroup();
+var empData=[],schData=[],showEmp=true,showSch=true,showCirc=true,circR=30;
+var specFilter='all',regFilter='all',progFilter='all',regions=new Set(),programmes=new Set();
+
+map=L.map('map',{zoomControl:false}).setView([53.5,-2.5],6);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{attribution:'OpenStreetMap, CARTO',subdomains:'abcd',maxZoom:19}).addTo(map);
+L.control.zoom({position:'topright'}).addTo(map);
+empLayer.addTo(map);schLayer.addTo(map);circLayer.addTo(map);
+
+function extractPostcode(a){if(!a)return'';var m=a.match(/\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i);return m?m[1].toUpperCase().replace(/\s+/,' ').trim():'';}
+function specFromRole(r){if(!r)return'Unknown';var l=r.toLowerCase();return l.indexOf('primary')!==-1?'Primary':l.indexOf('secondary')!==-1?'Secondary':'Unknown';}
+
+async function lookupPostcodes(postcodes){
+    var results={},seen={},clean=[];
+    postcodes.forEach(function(p){var u=p.trim().toUpperCase();if(u&&!seen[u]){clean.push(u);seen[u]=true;}});
+    var batches=[];for(var i=0;i<clean.length;i+=100)batches.push(clean.slice(i,i+100));
+    for(var i=0;i<batches.length;i++){
+        try{var res=await fetch('https://api.postcodes.io/postcodes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({postcodes:batches[i]})});var data=await res.json();if(data.result)data.result.forEach(function(r){if(r.result)results[r.query]={lat:r.result.latitude,lng:r.result.longitude};});}catch(e){}
+        setOT('Looking up postcodes... '+Math.round(((i+1)/batches.length)*100)+'%');
+    }return results;
+}
+async function lookupPlaces(places){
+    var results={};
+    for(var i=0;i<places.length;i++){
+        var p=places[i].trim();if(!p||results[p.toLowerCase()])continue;
+        try{var res=await fetch('https://api.postcodes.io/places?q='+encodeURIComponent(p)+'&limit=1');var data=await res.json();if(data.result&&data.result.length>0)results[p.toLowerCase()]={lat:data.result[0].latitude,lng:data.result[0].longitude};}catch(e){}
+        if(i%5===0)setOT('Looking up locations... '+Math.round(((i+1)/places.length)*100)+'%');
+        if(i<places.length-1)await new Promise(function(r){setTimeout(r,100);});
+    }return results;
+}
+
+function parseCSV(text){
+    var lines=text.trim().split(/\r?\n/);if(lines.length<2)return[];
+    var sep=lines[0].indexOf('\t')!==-1?'\t':',';
+    var hdrs=lines[0].split(sep).map(function(h){return h.trim().toLowerCase().replace(/['"]/g,'');});
+    return lines.slice(1).map(function(line){
+        var vals=[];var inQ=false;var cur='';
+        for(var c=0;c<line.length;c++){var ch=line[c];if(ch==='"'){inQ=!inQ;}else if((ch===sep||ch===','&&sep===',')&&!inQ){vals.push(cur.trim());cur='';}else{cur+=ch;}}
+        vals.push(cur.trim());
+        var row={};hdrs.forEach(function(h,i){row[h]=(vals[i]||'').replace(/^['"]|['"]$/g,'');});return row;
+    }).filter(function(r){return Object.values(r).some(function(v){return v;});});
+}
+async function parseFile(file){
+    var ext=file.name.split('.').pop().toLowerCase();
+    if(ext==='csv'||ext==='tsv'||ext==='txt')return parseCSV(await file.text());
+    if(ext==='xlsx'||ext==='xls'){var wb=XLSX.read(await file.arrayBuffer(),{type:'array'});return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''}).map(function(row){var o={};Object.keys(row).forEach(function(k){o[k.trim().toLowerCase()]=String(row[k]).trim();});return o;});}
+    throw new Error('Unsupported file type');
+}
+function normSchool(row){
+    var addr=row['billing address']||row['billingaddress']||row['address']||'';
+    return{name:row['account name']||row['accountname']||row['name']||'Unknown',region:row['region: region name']||row['region']||'',programme:row['programme plan: programme plan name']||row['programme']||row['program']||'',ap:row['internal support role: full name']||row['ap name']||row['ap']||'',address:addr,postcode:extractPostcode(addr),specialism:row['phase']||row['specialism']||'Unknown'};
+}
+function normEmployee(row){
+    return{name:row['name']||row['employee']||row['full name']||'Unknown',role:row['role']||row['job title']||row['title']||'',location:row['location']||row['city']||row['town']||row['place']||'',specialism:specFromRole(row['role']||row['job title']||row['title']||'')};
+}
+
+async function handleUpload(e,type){
+    var file=e.target.files[0];if(!file)return;showOL(true);
+    try{
+        var raw=await parseFile(file);if(!raw.length)throw new Error('No data rows found.');
+        if(type==='schools'){
+            var data=raw.map(normSchool).filter(function(r){return r.postcode;});
+            if(!data.length)throw new Error('No postcodes found in Billing Address.');
+            setOT('Looking up school postcodes...');
+            var coords=await lookupPostcodes(data.map(function(r){return r.postcode;}));
+            var m=0;data.forEach(function(r){var c=coords[r.postcode];if(c){r.lat=c.lat;r.lng=c.lng;m++;}});
+            schData=data.filter(function(r){return r.lat;});
+            document.getElementById('schUpload').classList.add('loaded');
+            document.getElementById('schStatus').textContent='\u2713 '+schData.length+' schools loaded';
+            schData.forEach(function(r){if(r.region)regions.add(r.region);if(r.programme)programmes.add(r.programme);});
+            var f=data.length-m;if(f>0)showT(m+' of '+data.length+' matched. '+f+' not found.','info');else showT(m+' schools plotted!','success');
+        }else{
+            var data=raw.map(normEmployee).filter(function(r){return r.location;});
+            if(!data.length)throw new Error('No locations found. Check "Location" column.');
+            setOT('Looking up employee locations...');
+            var places=await lookupPlaces(data.map(function(r){return r.location;}));
+            var m=0;data.forEach(function(r){var c=places[r.location.toLowerCase()];if(c){r.lat=c.lat;r.lng=c.lng;m++;}});
+            empData=data.filter(function(r){return r.lat;});
+            document.getElementById('empUpload').classList.add('loaded');
+            document.getElementById('empStatus').textContent='\u2713 '+empData.length+' employees loaded';
+            var f=data.length-m;if(f>0)showT(m+' of '+data.length+' matched. '+f+' not found.','info');else showT(m+' employees plotted!','success');
+        }
+        buildRC();buildPC();updateStats();render();
+    }catch(err){showT(err.message,'error');}
+    showOL(false);e.target.value='';
+}
+
+function gc(type,spec){var p=(spec||'').toLowerCase()==='primary';return type==='employee'?(p?'#f59e0b':'#8b5cf6'):(p?'#10b981':'#ec4899');}
+function mi(colour,shape){var s=shape==='circle'?14:12,br=shape==='circle'?'50%':'3px';return L.divIcon({className:'',html:'<div style="width:'+s+'px;height:'+s+'px;background:'+colour+';border:2px solid rgba(255,255,255,0.9);border-radius:'+br+';box-shadow:0 2px 8px rgba(0,0,0,0.4),0 0 12px '+colour+'66"></div>',iconSize:[s,s],iconAnchor:[s/2,s/2]});}
+
+function schoolPopup(d){
+    var c=gc('school',d.specialism),h='<div class="popup-name">'+d.name+'</div>';
+    h+='<div class="popup-row">&#x1F4EE; '+d.postcode+'</div>';
+    if(d.region)h+='<div class="popup-row">&#x1F4CD; '+d.region+'</div>';
+    if(d.programme)h+='<div class="popup-row">&#x1F4CB; '+d.programme+'</div>';
+    if(d.ap){h+='<hr class="popup-divider">';h+='<div class="popup-row" style="color:var(--text-primary)"><strong>&#x1F464; AP Support:</strong> '+d.ap+'</div>';}
+    h+='<span class="popup-badge" style="background:'+c+'33;color:'+c+'">'+d.specialism+'</span>';return h;
+}
+function employeePopup(d){
+    var c=gc('employee',d.specialism),h='<div class="popup-name">'+d.name+'</div>';
+    if(d.role)h+='<div class="popup-row">&#x1F4BC; '+d.role+'</div>';
+    h+='<div class="popup-row">&#x1F4CD; '+d.location+'</div>';
+    h+='<span class="popup-badge" style="background:'+c+'33;color:'+c+'">'+d.specialism+'</span>';return h;
+}
+
+function passes(r){
+    if(specFilter!=='all'&&(r.specialism||'').toLowerCase()!==specFilter)return false;
+    if(regFilter!=='all'&&r.region!==regFilter)return false;
+    if(progFilter!=='all'&&r.programme&&r.programme!==progFilter)return false;return true;
+}
+function render(){
+    empLayer.clearLayers();schLayer.clearLayers();circLayer.clearLayers();var pts=[];
+    if(showEmp)empData.filter(passes).forEach(function(r){
+        var c=gc('employee',r.specialism);
+        empLayer.addLayer(L.marker([r.lat,r.lng],{icon:mi(c,'circle')}).bindPopup(employeePopup(r),{closeButton:false,maxWidth:280}));
+        pts.push([r.lat,r.lng]);
+        if(showCirc)circLayer.addLayer(L.circle([r.lat,r.lng],{radius:circR*1609.34,color:c,fillColor:c,fillOpacity:0.06,weight:1.5,opacity:0.3,dashArray:'6 4'}));
+    });
+    if(showSch)schData.filter(passes).forEach(function(r){
+        var c=gc('school',r.specialism);
+        schLayer.addLayer(L.marker([r.lat,r.lng],{icon:mi(c,'square')}).bindPopup(schoolPopup(r),{closeButton:false,maxWidth:300}));
+        pts.push([r.lat,r.lng]);
+    });
+    if(pts.length)map.fitBounds(L.latLngBounds(pts).pad(0.1));
+}
+
+function toggleCircles(){showCirc=!showCirc;document.getElementById('togCircles').classList.toggle('on',showCirc);render();}
+function toggleLayer(t){if(t==='employees'){showEmp=!showEmp;document.getElementById('togEmp').classList.toggle('on',showEmp);}else{showSch=!showSch;document.getElementById('togSch').classList.toggle('on',showSch);}render();}
+function updateDist(v){circR=parseInt(v);document.getElementById('distVal').textContent=v;render();}
+function setSpec(f){specFilter=f;document.querySelectorAll('#specChips .chip').forEach(function(el){el.classList.toggle('on',el.textContent.toLowerCase()===f);});render();}
+function setReg(f){regFilter=f;document.querySelectorAll('#regionChips .chip').forEach(function(el){el.classList.toggle('on',el.dataset.r===f);});render();}
+function setProg(f){progFilter=f;document.querySelectorAll('#progChips .chip').forEach(function(el){el.classList.toggle('on',el.dataset.p===f);});render();}
+function buildRC(){
+    var s=document.getElementById('regionSection'),b=document.getElementById('regionChips');
+    if(!regions.size){s.style.display='none';return;}s.style.display='block';
+    var h='<button class="chip on" data-r="all" onclick="setReg(\'all\')">All</button>';
+    Array.from(regions).sort().forEach(function(r){h+='<button class="chip" data-r="'+r+'" onclick="setReg(\''+r.replace(/'/g,"\\'")+'\')">'+r+'</button>';});b.innerHTML=h;
+}
+function buildPC(){
+    var s=document.getElementById('progSection'),b=document.getElementById('progChips');
+    if(!programmes.size){s.style.display='none';return;}s.style.display='block';
+    var h='<button class="chip on" data-p="all" onclick="setProg(\'all\')">All</button>';
+    Array.from(programmes).sort().forEach(function(p){h+='<button class="chip" data-p="'+p+'" onclick="setProg(\''+p.replace(/'/g,"\\'")+'\')">'+p+'</button>';});b.innerHTML=h;
+}
+function updateStats(){
+    document.getElementById('nEmp').textContent=empData.length;document.getElementById('nSch').textContent=schData.length;
+    var all=empData.concat(schData);
+    document.getElementById('nPri').textContent=all.filter(function(r){return(r.specialism||'').toLowerCase()==='primary';}).length;
+    document.getElementById('nSec').textContent=all.filter(function(r){return(r.specialism||'').toLowerCase()==='secondary';}).length;
+}
+function clearAll(){
+    empData=[];schData=[];regions.clear();programmes.clear();empLayer.clearLayers();schLayer.clearLayers();circLayer.clearLayers();updateStats();
+    ['empUpload','schUpload'].forEach(function(id){document.getElementById(id).classList.remove('loaded');});
+    ['empStatus','schStatus'].forEach(function(id){document.getElementById(id).textContent='';});
+    document.getElementById('regionSection').style.display='none';document.getElementById('progSection').style.display='none';
+    map.setView([53.5,-2.5],6);showT('All data cleared','info');
+}
+function downloadTemplate(type){
+    var c;if(type==='employees')c='Name,Role,Location\nJane Smith,AP Primary,Manchester\nJohn Doe,AP Secondary,Leeds\nSarah Jones,DL Primary,Birmingham';
+    else c='Account Name,Region: Region Name,Programme Plan: Programme Plan Name,Internal Support Role: Full Name,Billing Address,Phase\nOakwood Academy,North West,NPQ Leading Teaching,Jane Smith,"123 High Street, Manchester, M13 9PL",Primary\nHighfield School,Yorkshire,Leading Together,John Doe,"45 Park Lane, Leeds, LS6 3AA",Secondary';
+    var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([c],{type:'text/csv'}));a.download=type+'_template.csv';a.click();
+}
+function showPrivacy(){document.getElementById('privacyModal').classList.add('show');}
+function hidePrivacy(){document.getElementById('privacyModal').classList.remove('show');}
+document.getElementById('privacyModal').addEventListener('click',function(e){if(e.target===this)hidePrivacy();});
+function showOL(v){document.getElementById('overlay').classList.toggle('show',v);}
+function setOT(t){document.getElementById('overlayText').textContent=t;}
+function showT(msg,type){var el=document.getElementById('toast');el.textContent=msg;el.className='toast '+(type||'info')+' show';setTimeout(function(){el.classList.remove('show');},4000);}
+</script>
+</body>
+</html>
