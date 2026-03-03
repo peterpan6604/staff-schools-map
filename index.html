@@ -74,7 +74,7 @@
         .spinner{width:48px;height:48px;border:4px solid var(--bg-card);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite}
         @keyframes spin{to{transform:rotate(360deg)}}
         .overlay-text{margin-top:16px;font-size:14px;color:var(--text-secondary)}
-        .toast{position:fixed;bottom:24px;right:24px;padding:14px 20px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-weight:500;z-index:10000;max-width:360px;transform:translateY(80px);opacity:0;transition:all 0.35s;box-shadow:0 4px 24px rgba(0,0,0,0.3)}
+        .toast{position:fixed;bottom:24px;right:24px;padding:14px 20px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-weight:500;z-index:10000;max-width:400px;transform:translateY(80px);opacity:0;transition:all 0.35s;box-shadow:0 4px 24px rgba(0,0,0,0.3)}
         .toast.show{transform:translateY(0);opacity:1}
         .toast.success{border-left:4px solid #10b981}.toast.error{border-left:4px solid #ef4444}.toast.info{border-left:4px solid var(--accent)}
         .modal-bg{position:fixed;inset:0;background:rgba(15,20,25,0.8);z-index:10001;display:none;align-items:center;justify-content:center}
@@ -149,11 +149,11 @@
         <p>This tool is designed with data privacy as a core principle:</p>
         <ul>
             <li><strong>All data stays in your browser.</strong> No CSV data is uploaded to any server, database, or cloud storage.</li>
-            <li><strong>Nothing is stored.</strong> When you close this tab, all uploaded data is permanently gone. No cookies, no local storage, no saved files.</li>
-            <li><strong>Postcode lookups are anonymous.</strong> Only postcodes are sent to Postcodes.io (a free UK government-backed service) to get coordinates. No names, roles, or personal data is transmitted.</li>
-            <li><strong>Place name lookups are anonymous.</strong> Only town/city names are sent to get approximate coordinates. No personal details included.</li>
+            <li><strong>Nothing is stored.</strong> When you close this tab, all data is gone. No cookies, no local storage.</li>
+            <li><strong>Postcode lookups are anonymous.</strong> Only postcodes are sent to Postcodes.io to get coordinates. No names or personal data.</li>
+            <li><strong>Place name lookups are anonymous.</strong> Only town/city names are sent to OpenStreetMap Nominatim. No personal details.</li>
             <li><strong>The host (GitHub Pages) never sees your data.</strong> It only serves the code file.</li>
-            <li><strong>No analytics or tracking.</strong> No Google Analytics, no cookies, no tracking scripts of any kind.</li>
+            <li><strong>No analytics or tracking.</strong> No cookies, no tracking scripts of any kind.</li>
         </ul>
         <p style="font-size:12px;color:var(--text-muted)">For questions about data handling, contact your programme manager.</p>
         <button class="btn btn-ghost" onclick="hidePrivacy()" style="width:100%;justify-content:center">Got it &#8212; close</button>
@@ -170,12 +170,7 @@ L.control.zoom({position:'topright'}).addTo(map);
 empLayer.addTo(map);schLayer.addTo(map);circLayer.addTo(map);
 
 function extractPostcode(a){if(!a)return'';var m=a.match(/\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i);return m?m[1].toUpperCase().replace(/\s+/,' ').trim():'';}
-
-/* Clean location string: remove bracketed suffixes like (WM), trim whitespace */
-function cleanLocation(loc){
-    if(!loc)return'';
-    return loc.replace(/\s*\([^)]*\)\s*/g,'').trim();
-}
+function cleanLocation(loc){if(!loc)return'';return loc.replace(/\s*\([^)]*\)\s*/g,'').trim();}
 
 async function lookupPostcodes(postcodes){
     var results={},seen={},clean=[];
@@ -187,6 +182,12 @@ async function lookupPostcodes(postcodes){
     }return results;
 }
 
+/*
+ * Use OpenStreetMap Nominatim for place name geocoding.
+ * This is free, no API key needed, and far more comprehensive than postcodes.io/places.
+ * Rate limit: 1 request per second (we respect this with delays).
+ * Only the place name is sent - no personal data.
+ */
 async function lookupPlaces(places){
     var results={};
     var unique=[];var seen={};
@@ -197,44 +198,20 @@ async function lookupPlaces(places){
         var cleaned=cleanLocation(raw);
         if(!cleaned)continue;
 
-        /* Try the cleaned name first */
-        var found=false;
         try{
-            var res=await fetch('https://api.postcodes.io/places?q='+encodeURIComponent(cleaned)+'&limit=1');
+            var url='https://nominatim.openstreetmap.org/search?format=json&countrycodes=gb&limit=1&q='+encodeURIComponent(cleaned);
+            var res=await fetch(url,{headers:{'User-Agent':'StaffSchoolsMap/1.0'}});
             var data=await res.json();
-            if(data.result&&data.result.length>0){
-                results[raw.toLowerCase()]={lat:data.result[0].latitude,lng:data.result[0].longitude};
-                found=true;
+            if(data&&data.length>0){
+                results[raw.toLowerCase()]={lat:parseFloat(data[0].lat),lng:parseFloat(data[0].lon)};
+            }else{
+                console.warn('Nominatim: no result for "'+cleaned+'"');
             }
-        }catch(e){}
+        }catch(e){console.error('Nominatim error for '+cleaned,e);}
 
-        /* If not found and multi-word, try just the first word (e.g. "Goring on Sea" -> "Goring") */
-        if(!found&&cleaned.indexOf(' ')!==-1){
-            var first=cleaned.split(' ')[0];
-            try{
-                var res2=await fetch('https://api.postcodes.io/places?q='+encodeURIComponent(first)+'&limit=1');
-                var data2=await res2.json();
-                if(data2.result&&data2.result.length>0){
-                    results[raw.toLowerCase()]={lat:data2.result[0].latitude,lng:data2.result[0].longitude};
-                    found=true;
-                }
-            }catch(e){}
-        }
-
-        /* Last resort: try as a postcode in case someone put a postcode in the location field */
-        if(!found){
-            try{
-                var res3=await fetch('https://api.postcodes.io/postcodes/'+encodeURIComponent(cleaned.replace(/\s/g,'')));
-                var data3=await res3.json();
-                if(data3.result){
-                    results[raw.toLowerCase()]={lat:data3.result.latitude,lng:data3.result.longitude};
-                    found=true;
-                }
-            }catch(e){}
-        }
-
-        if(i%3===0)setOT('Looking up locations... '+Math.round(((i+1)/unique.length)*100)+'%');
-        if(i<unique.length-1)await new Promise(function(r){setTimeout(r,120);});
+        if(i%2===0)setOT('Looking up locations... '+Math.round(((i+1)/unique.length)*100)+'%');
+        /* Nominatim requires max 1 req/sec */
+        if(i<unique.length-1)await new Promise(function(r){setTimeout(r,1100);});
     }
     return results;
 }
@@ -263,40 +240,29 @@ function normSchool(row){
 }
 
 function normEmployee(row){
-    /* Map the actual column names from the spreadsheet */
-    var name=row['internal support full name']||row['internal support f']||row['name']||row['employee']||row['full name']||'';
-    /* Try multiple possible header variations */
-    if(!name){
-        var keys=Object.keys(row);
-        for(var i=0;i<keys.length;i++){
-            if(keys[i].indexOf('internal support')!==-1||keys[i].indexOf('full name')!==-1){
-                name=row[keys[i]];break;
-            }
+    /* Try multiple possible header names */
+    var name='';
+    var keys=Object.keys(row);
+    for(var i=0;i<keys.length;i++){
+        var k=keys[i];
+        if(k.indexOf('internal support')!==-1||k==='name'||k==='employee'||k==='full name'||k.indexOf('full name')!==-1){
+            if(row[k]){name=row[k];break;}
         }
     }
-    if(!name)name='Unknown';
+    if(!name)name=row[keys[0]]||'Unknown';
 
-    var role=row['dl/ap']||row['role']||row['job title']||row['title']||'';
-    /* Try to find dl/ap column by partial match */
-    if(!role){
-        var keys=Object.keys(row);
-        for(var i=0;i<keys.length;i++){
-            if(keys[i].indexOf('dl')!==-1||keys[i].indexOf('ap')!==-1){
-                role=row[keys[i]];break;
-            }
+    var role='';
+    for(var i=0;i<keys.length;i++){
+        var k=keys[i];
+        if(k==='dl/ap'||k==='role'||k==='job title'||k==='title'){
+            if(row[k]){role=row[k];break;}
         }
     }
 
     var location=row['location']||row['city']||row['town']||row['place']||'';
     var phase=row['phase']||row['specialism']||'';
-
-    /* If no explicit phase column, try to detect from role */
-    if(!phase){
-        var r=(role||'').toLowerCase();
-        if(r.indexOf('primary')!==-1)phase='Primary';
-        else if(r.indexOf('secondary')!==-1)phase='Secondary';
-        else phase='Unknown';
-    }
+    if(!phase&&role){var r=role.toLowerCase();if(r.indexOf('primary')!==-1)phase='Primary';else if(r.indexOf('secondary')!==-1)phase='Secondary';}
+    if(!phase)phase='Unknown';
 
     return{name:name,role:role,location:location,specialism:phase};
 }
@@ -305,9 +271,8 @@ async function handleUpload(e,type){
     var file=e.target.files[0];if(!file)return;showOL(true);
     try{
         var raw=await parseFile(file);if(!raw.length)throw new Error('No data rows found.');
-
-        /* Debug: log headers found */
-        if(raw.length>0)console.log('Headers found:',Object.keys(raw[0]));
+        console.log('Parsed headers:',Object.keys(raw[0]));
+        console.log('First row:',raw[0]);
 
         if(type==='schools'){
             var data=raw.map(normSchool).filter(function(r){return r.postcode;});
@@ -323,24 +288,17 @@ async function handleUpload(e,type){
         }else{
             var data=raw.map(normEmployee).filter(function(r){return r.location;});
             if(!data.length)throw new Error('No locations found. Check your file has a "Location" column.');
-
-            console.log('Employee data parsed:',data.slice(0,3));
-
+            console.log('Employees parsed:',data);
             setOT('Looking up employee locations...');
             var places=await lookupPlaces(data.map(function(r){return r.location;}));
-
-            console.log('Places found:',Object.keys(places));
-
+            console.log('Places resolved:',places);
             var m=0;data.forEach(function(r){var c=places[r.location.toLowerCase()];if(c){r.lat=c.lat;r.lng=c.lng;m++;}});
             empData=data.filter(function(r){return r.lat;});
             document.getElementById('empUpload').classList.add('loaded');
             document.getElementById('empStatus').textContent='\u2713 '+empData.length+' of '+data.length+' employees loaded';
             var f=data.length-m;
-            if(f>0){
-                var missing=data.filter(function(r){return!r.lat;}).map(function(r){return r.location;});
-                showT(m+' matched. Could not find: '+missing.join(', '),'info');
-                console.log('Unmatched locations:',missing);
-            }else showT(m+' employees plotted!','success');
+            if(f>0){var missing=data.filter(function(r){return!r.lat;}).map(function(r){return r.location;});showT(m+' matched. Not found: '+missing.join(', '),'info');}
+            else showT(m+' employees plotted!','success');
         }
         buildRC();buildPC();updateStats();render();
     }catch(err){showT(err.message,'error');console.error(err);}
@@ -427,7 +385,7 @@ function hidePrivacy(){document.getElementById('privacyModal').classList.remove(
 document.getElementById('privacyModal').addEventListener('click',function(e){if(e.target===this)hidePrivacy();});
 function showOL(v){document.getElementById('overlay').classList.toggle('show',v);}
 function setOT(t){document.getElementById('overlayText').textContent=t;}
-function showT(msg,type){var el=document.getElementById('toast');el.textContent=msg;el.className='toast '+(type||'info')+' show';setTimeout(function(){el.classList.remove('show');},4000);}
+function showT(msg,type){var el=document.getElementById('toast');el.textContent=msg;el.className='toast '+(type||'info')+' show';setTimeout(function(){el.classList.remove('show');},5000);}
 </script>
 </body>
 </html>
