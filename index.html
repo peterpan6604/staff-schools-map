@@ -102,7 +102,7 @@
     <aside class="sidebar">
         <div class="section">
             <div class="section-title">Data Upload</div>
-            <div class="upload" id="empUpload"><input type="file" accept=".csv,.xlsx,.xls" onchange="handleUpload(event,'employees')"><div class="upload-icon">&#x1F465;</div><div class="upload-label">Employees</div><div class="upload-hint">Name, Role, Location</div><div class="upload-status" id="empStatus"></div></div>
+            <div class="upload" id="empUpload"><input type="file" accept=".csv,.xlsx,.xls" onchange="handleUpload(event,'employees')"><div class="upload-icon">&#x1F465;</div><div class="upload-label">Employees</div><div class="upload-hint">Internal Support Full Name, DL/AP, Location, Phase</div><div class="upload-status" id="empStatus"></div></div>
             <div class="upload" id="schUpload"><input type="file" accept=".csv,.xlsx,.xls" onchange="handleUpload(event,'schools')"><div class="upload-icon">&#x1F3EB;</div><div class="upload-label">Schools</div><div class="upload-hint">Account Name, Region, Programme, AP, Address, Phase</div><div class="upload-status" id="schStatus"></div></div>
         </div>
         <div class="section">
@@ -170,7 +170,12 @@ L.control.zoom({position:'topright'}).addTo(map);
 empLayer.addTo(map);schLayer.addTo(map);circLayer.addTo(map);
 
 function extractPostcode(a){if(!a)return'';var m=a.match(/\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i);return m?m[1].toUpperCase().replace(/\s+/,' ').trim():'';}
-function specFromRole(r){if(!r)return'Unknown';var l=r.toLowerCase();return l.indexOf('primary')!==-1?'Primary':l.indexOf('secondary')!==-1?'Secondary':'Unknown';}
+
+/* Clean location string: remove bracketed suffixes like (WM), trim whitespace */
+function cleanLocation(loc){
+    if(!loc)return'';
+    return loc.replace(/\s*\([^)]*\)\s*/g,'').trim();
+}
 
 async function lookupPostcodes(postcodes){
     var results={},seen={},clean=[];
@@ -181,14 +186,57 @@ async function lookupPostcodes(postcodes){
         setOT('Looking up postcodes... '+Math.round(((i+1)/batches.length)*100)+'%');
     }return results;
 }
+
 async function lookupPlaces(places){
     var results={};
-    for(var i=0;i<places.length;i++){
-        var p=places[i].trim();if(!p||results[p.toLowerCase()])continue;
-        try{var res=await fetch('https://api.postcodes.io/places?q='+encodeURIComponent(p)+'&limit=1');var data=await res.json();if(data.result&&data.result.length>0)results[p.toLowerCase()]={lat:data.result[0].latitude,lng:data.result[0].longitude};}catch(e){}
-        if(i%5===0)setOT('Looking up locations... '+Math.round(((i+1)/places.length)*100)+'%');
-        if(i<places.length-1)await new Promise(function(r){setTimeout(r,100);});
-    }return results;
+    var unique=[];var seen={};
+    places.forEach(function(p){var k=p.toLowerCase();if(!seen[k]){seen[k]=true;unique.push(p);}});
+
+    for(var i=0;i<unique.length;i++){
+        var raw=unique[i];
+        var cleaned=cleanLocation(raw);
+        if(!cleaned)continue;
+
+        /* Try the cleaned name first */
+        var found=false;
+        try{
+            var res=await fetch('https://api.postcodes.io/places?q='+encodeURIComponent(cleaned)+'&limit=1');
+            var data=await res.json();
+            if(data.result&&data.result.length>0){
+                results[raw.toLowerCase()]={lat:data.result[0].latitude,lng:data.result[0].longitude};
+                found=true;
+            }
+        }catch(e){}
+
+        /* If not found and multi-word, try just the first word (e.g. "Goring on Sea" -> "Goring") */
+        if(!found&&cleaned.indexOf(' ')!==-1){
+            var first=cleaned.split(' ')[0];
+            try{
+                var res2=await fetch('https://api.postcodes.io/places?q='+encodeURIComponent(first)+'&limit=1');
+                var data2=await res2.json();
+                if(data2.result&&data2.result.length>0){
+                    results[raw.toLowerCase()]={lat:data2.result[0].latitude,lng:data2.result[0].longitude};
+                    found=true;
+                }
+            }catch(e){}
+        }
+
+        /* Last resort: try as a postcode in case someone put a postcode in the location field */
+        if(!found){
+            try{
+                var res3=await fetch('https://api.postcodes.io/postcodes/'+encodeURIComponent(cleaned.replace(/\s/g,'')));
+                var data3=await res3.json();
+                if(data3.result){
+                    results[raw.toLowerCase()]={lat:data3.result.latitude,lng:data3.result.longitude};
+                    found=true;
+                }
+            }catch(e){}
+        }
+
+        if(i%3===0)setOT('Looking up locations... '+Math.round(((i+1)/unique.length)*100)+'%');
+        if(i<unique.length-1)await new Promise(function(r){setTimeout(r,120);});
+    }
+    return results;
 }
 
 function parseCSV(text){
@@ -197,7 +245,7 @@ function parseCSV(text){
     var hdrs=lines[0].split(sep).map(function(h){return h.trim().toLowerCase().replace(/['"]/g,'');});
     return lines.slice(1).map(function(line){
         var vals=[];var inQ=false;var cur='';
-        for(var c=0;c<line.length;c++){var ch=line[c];if(ch==='"'){inQ=!inQ;}else if((ch===sep||ch===','&&sep===',')&&!inQ){vals.push(cur.trim());cur='';}else{cur+=ch;}}
+        for(var c=0;c<line.length;c++){var ch=line[c];if(ch==='"'){inQ=!inQ;}else if(ch===sep&&!inQ){vals.push(cur.trim());cur='';}else{cur+=ch;}}
         vals.push(cur.trim());
         var row={};hdrs.forEach(function(h,i){row[h]=(vals[i]||'').replace(/^['"]|['"]$/g,'');});return row;
     }).filter(function(r){return Object.values(r).some(function(v){return v;});});
@@ -208,18 +256,59 @@ async function parseFile(file){
     if(ext==='xlsx'||ext==='xls'){var wb=XLSX.read(await file.arrayBuffer(),{type:'array'});return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''}).map(function(row){var o={};Object.keys(row).forEach(function(k){o[k.trim().toLowerCase()]=String(row[k]).trim();});return o;});}
     throw new Error('Unsupported file type');
 }
+
 function normSchool(row){
     var addr=row['billing address']||row['billingaddress']||row['address']||'';
     return{name:row['account name']||row['accountname']||row['name']||'Unknown',region:row['region: region name']||row['region']||'',programme:row['programme plan: programme plan name']||row['programme']||row['program']||'',ap:row['internal support role: full name']||row['ap name']||row['ap']||'',address:addr,postcode:extractPostcode(addr),specialism:row['phase']||row['specialism']||'Unknown'};
 }
+
 function normEmployee(row){
-    return{name:row['name']||row['employee']||row['full name']||'Unknown',role:row['role']||row['job title']||row['title']||'',location:row['location']||row['city']||row['town']||row['place']||'',specialism:specFromRole(row['role']||row['job title']||row['title']||'')};
+    /* Map the actual column names from the spreadsheet */
+    var name=row['internal support full name']||row['internal support f']||row['name']||row['employee']||row['full name']||'';
+    /* Try multiple possible header variations */
+    if(!name){
+        var keys=Object.keys(row);
+        for(var i=0;i<keys.length;i++){
+            if(keys[i].indexOf('internal support')!==-1||keys[i].indexOf('full name')!==-1){
+                name=row[keys[i]];break;
+            }
+        }
+    }
+    if(!name)name='Unknown';
+
+    var role=row['dl/ap']||row['role']||row['job title']||row['title']||'';
+    /* Try to find dl/ap column by partial match */
+    if(!role){
+        var keys=Object.keys(row);
+        for(var i=0;i<keys.length;i++){
+            if(keys[i].indexOf('dl')!==-1||keys[i].indexOf('ap')!==-1){
+                role=row[keys[i]];break;
+            }
+        }
+    }
+
+    var location=row['location']||row['city']||row['town']||row['place']||'';
+    var phase=row['phase']||row['specialism']||'';
+
+    /* If no explicit phase column, try to detect from role */
+    if(!phase){
+        var r=(role||'').toLowerCase();
+        if(r.indexOf('primary')!==-1)phase='Primary';
+        else if(r.indexOf('secondary')!==-1)phase='Secondary';
+        else phase='Unknown';
+    }
+
+    return{name:name,role:role,location:location,specialism:phase};
 }
 
 async function handleUpload(e,type){
     var file=e.target.files[0];if(!file)return;showOL(true);
     try{
         var raw=await parseFile(file);if(!raw.length)throw new Error('No data rows found.');
+
+        /* Debug: log headers found */
+        if(raw.length>0)console.log('Headers found:',Object.keys(raw[0]));
+
         if(type==='schools'){
             var data=raw.map(normSchool).filter(function(r){return r.postcode;});
             if(!data.length)throw new Error('No postcodes found in Billing Address.');
@@ -233,17 +322,28 @@ async function handleUpload(e,type){
             var f=data.length-m;if(f>0)showT(m+' of '+data.length+' matched. '+f+' not found.','info');else showT(m+' schools plotted!','success');
         }else{
             var data=raw.map(normEmployee).filter(function(r){return r.location;});
-            if(!data.length)throw new Error('No locations found. Check "Location" column.');
+            if(!data.length)throw new Error('No locations found. Check your file has a "Location" column.');
+
+            console.log('Employee data parsed:',data.slice(0,3));
+
             setOT('Looking up employee locations...');
             var places=await lookupPlaces(data.map(function(r){return r.location;}));
+
+            console.log('Places found:',Object.keys(places));
+
             var m=0;data.forEach(function(r){var c=places[r.location.toLowerCase()];if(c){r.lat=c.lat;r.lng=c.lng;m++;}});
             empData=data.filter(function(r){return r.lat;});
             document.getElementById('empUpload').classList.add('loaded');
-            document.getElementById('empStatus').textContent='\u2713 '+empData.length+' employees loaded';
-            var f=data.length-m;if(f>0)showT(m+' of '+data.length+' matched. '+f+' not found.','info');else showT(m+' employees plotted!','success');
+            document.getElementById('empStatus').textContent='\u2713 '+empData.length+' of '+data.length+' employees loaded';
+            var f=data.length-m;
+            if(f>0){
+                var missing=data.filter(function(r){return!r.lat;}).map(function(r){return r.location;});
+                showT(m+' matched. Could not find: '+missing.join(', '),'info');
+                console.log('Unmatched locations:',missing);
+            }else showT(m+' employees plotted!','success');
         }
         buildRC();buildPC();updateStats();render();
-    }catch(err){showT(err.message,'error');}
+    }catch(err){showT(err.message,'error');console.error(err);}
     showOL(false);e.target.value='';
 }
 
@@ -318,7 +418,7 @@ function clearAll(){
     map.setView([53.5,-2.5],6);showT('All data cleared','info');
 }
 function downloadTemplate(type){
-    var c;if(type==='employees')c='Name,Role,Location\nJane Smith,AP Primary,Manchester\nJohn Doe,AP Secondary,Leeds\nSarah Jones,DL Primary,Birmingham';
+    var c;if(type==='employees')c='Internal Support Full Name,DL/AP,Location,Phase\nJane Smith,AP,Manchester,Primary\nJohn Doe,AP,Leeds,Secondary\nSarah Jones,DL,Birmingham,Primary';
     else c='Account Name,Region: Region Name,Programme Plan: Programme Plan Name,Internal Support Role: Full Name,Billing Address,Phase\nOakwood Academy,North West,NPQ Leading Teaching,Jane Smith,"123 High Street, Manchester, M13 9PL",Primary\nHighfield School,Yorkshire,Leading Together,John Doe,"45 Park Lane, Leeds, LS6 3AA",Secondary';
     var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([c],{type:'text/csv'}));a.download=type+'_template.csv';a.click();
 }
